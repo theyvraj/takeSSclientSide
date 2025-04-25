@@ -1,4 +1,8 @@
 import pyautogui
+from PIL import Image
+import logging
+from logging.handlers import RotatingFileHandler
+import ctypes
 import base64
 import io
 from datetime import datetime
@@ -6,12 +10,6 @@ import time
 import requests
 import socket
 import os
-import logging
-from logging.handlers import RotatingFileHandler
-from PIL import Image
-import uuid
-import getpass
-import ctypes
 import uuid
 import getpass
 
@@ -52,7 +50,6 @@ def setup_logger():
 logger, DAILY_LOG_FILE = setup_logger()
 
 def log(msg):
-    print(msg)
     logger.info(msg)
 
 # --- Helper Functions ---
@@ -137,6 +134,8 @@ def get_token(username, login_url):
         response = requests.post(login_url, json=payload, headers=headers, timeout=10)
         if response.status_code == 200:
             return response.json().get('token')
+        else:
+            log(f"[AuthError] Login failed with status {response.status_code}: {response.text}")
     except Exception as e:
         log(f"[ERROR] Token fetch failed: {e}")
     return None
@@ -172,6 +171,7 @@ def run_loop(api_url, login_url, screenshot_interval=3, send_interval=5):
     last_send_time = 0
     idle_start = None
     idle_sessions = []
+    screenshot = None
 
     while True:
         now = time.time()
@@ -217,3 +217,20 @@ def run_loop(api_url, login_url, screenshot_interval=3, send_interval=5):
 # --- Entry Point ---
 if __name__ == "__main__":
     run_loop(API_URL, LOGIN_URL)
+
+"""
+pyinstaller --onefile --noconsole --add-data "screenshots;screenshots" --add-data "offline_queue;offline_queue" --add-data "logs;logs" main.py
+
+from datetime import timedelta
+MAX_OFFLINE_AGE_DAYS = 3
+def delete_old_offline_files():
+    now = time.time()
+    for filename in os.listdir(OFFLINE_QUEUE_DIR):
+        if filename.endswith(".png"):
+            filepath = os.path.join(OFFLINE_QUEUE_DIR, filename)
+            if os.path.isfile(filepath):
+                file_age_days = (now - os.path.getmtime(filepath)) / (60 * 60 * 24)
+                if file_age_days > MAX_OFFLINE_AGE_DAYS:
+                    os.remove(filepath)
+                    log(f"🧹 Deleted old offline screenshot: {filepath}")
+"""
