@@ -6,132 +6,214 @@ import time
 import requests
 import socket
 import os
-import json
+import logging
+from logging.handlers import RotatingFileHandler
+from PIL import Image
+import uuid
+import getpass
+import ctypes
+import uuid
+import getpass
 
+def get_computer_username():
+    return getpass.getuser()
 
+def get_system_username_uuid():
+    system_uuid = str(uuid.getnode())
+    username = get_computer_username().lower()
+    return f"{username}_{system_uuid}"
+
+# --- Configuration ---
+SCREENSHOTS_DIR = "screenshots"
 OFFLINE_QUEUE_DIR = "offline_queue"
+LOG_DIR = "logs"
+IDLE_THRESHOLD = 60  # seconds
+MAX_LOG_ENTRIES = 5
+
+API_URL = "http://192.168.211.28:8000/api/screenshots/"
+LOGIN_URL = "http://192.168.211.28:8000/api/login/"
+
+# --- Ensure Directories ---
+for d in [SCREENSHOTS_DIR, OFFLINE_QUEUE_DIR, LOG_DIR]:
+    os.makedirs(d, exist_ok=True)
+
+# --- Logging Setup ---
+def setup_logger():
+    today = datetime.now().strftime('%Y-%m-%d')
+    log_path = os.path.join(LOG_DIR, f"{get_system_username_uuid()}_{today}.log")
+    logger = logging.getLogger("ClientLogger")
+    logger.setLevel(logging.INFO)
+    handler = RotatingFileHandler(log_path, maxBytes=1_000_000, backupCount=3, encoding='utf-8')
+    formatter = logging.Formatter('[%(asctime)s] %(levelname)s - %(message)s', datefmt='%d-%m-%Y %H:%M:%S')
+    handler.setFormatter(formatter)
+    logger.addHandler(handler)
+    return logger, log_path
+
+logger, DAILY_LOG_FILE = setup_logger()
+
+def log(msg):
+    print(msg)
+    logger.info(msg)
+
+# --- Helper Functions ---
+def current_timestamp():
+    return datetime.now().strftime("%d-%m-%Y_%H-%M-%S")
+
+def get_computer_username():
+    return getpass.getuser()
+
+def get_system_username_uuid():
+    system_uuid = str(uuid.getnode())
+    username = get_computer_username().lower()
+    return f"{username}_{system_uuid}"
+
 def check_internet(host="8.8.8.8", port=53, timeout=3):
     try:
         socket.setdefaulttimeout(timeout)
         socket.socket(socket.AF_INET, socket.SOCK_STREAM).connect((host, port))
         return True
     except (socket.timeout, socket.error):
-        return False 
+        return False
 
-def save_offline_screenshot(screenshot, timestamp):
-    if not os.path.exists(OFFLINE_QUEUE_DIR):
-        os.makedirs(OFFLINE_QUEUE_DIR)
-    filename = f"{OFFLINE_QUEUE_DIR}/screenshot_{timestamp}.png"
-    screenshot.save(filename)
-    print(f"💾 Offline screenshot saved: {filename}")
+def save_screenshot(screenshot, timestamp):
+    filepath = os.path.join(SCREENSHOTS_DIR, f"screenshot_{timestamp}.png")
+    screenshot.save(filepath)
+    log(f"🖼️ Screenshot saved to: {filepath}")
+    return filepath
 
-def upload_offline_screenshots(api_url, token):
-    if not os.path.exists(OFFLINE_QUEUE_DIR):
-        return
-
-    headers = {"Authorization": f"Token {token}"}
-    files = os.listdir(OFFLINE_QUEUE_DIR)
-    png_files = [f for f in files if f.endswith(".png")]
-
-    for file in png_files:
-        filepath = os.path.join(OFFLINE_QUEUE_DIR, file)
-        try:
-            with open(filepath, 'rb') as img_file:
-                img_bytes = img_file.read()
-                base64_encoded = base64.b64encode(img_bytes).decode('utf-8')
-                timestamp = file.replace("screenshot_", "").replace(".png", "")
-                payload = {
-                    "screenshot_json": {
-                        timestamp: base64_encoded
-                    }
-                }
-                response = requests.post(api_url, json=payload, headers=headers)
-
-                if response.status_code == 200:
-                    print(f"☁️ Uploaded offline screenshot: {file}")
-                    os.remove(filepath)
-                else:
-                    print(f"⚠️ Failed to upload {file}: {response.status_code} {response.text}")
-        except Exception as e:
-            print(f"❌ Error uploading offline screenshot {file}: {e}")
-
+def save_offline_copy(screenshot, timestamp):
+    filepath = os.path.join(OFFLINE_QUEUE_DIR, f"screenshot_{timestamp}.png")
+    screenshot.save(filepath)
+    log(f"💾 Offline copy saved: {filepath}")
+    return filepath
 
 def encode_screenshot(screenshot):
     img_byte_arr = io.BytesIO()
     screenshot.save(img_byte_arr, format='PNG')
-    img_bytes = img_byte_arr.getvalue()
-    base64_encoded = base64.b64encode(img_bytes)
-    utf8_string = base64_encoded.decode('utf-8')
-    timestamp = datetime.now().strftime("%d-%m-%Y_%H-%M-%S")
-    return {timestamp: utf8_string}
+    return base64.b64encode(img_byte_arr.getvalue()).decode('utf-8')
 
-def get_token(username, password, login_url):
+def get_complete_logs():
+    if not os.path.exists(DAILY_LOG_FILE):
+        return ""
     try:
-        response = requests.post(login_url, data={'username': username, 'password': password})
+        with open(DAILY_LOG_FILE, "r", encoding="utf-8") as f:
+            return f.read()
+    except Exception as e:
+        return f"[LogError] Could not read logs: {str(e)}"
+
+def get_idle_duration_windows():
+    """Returns idle time in seconds using WinAPI."""
+    class LASTINPUTINFO(ctypes.Structure):
+        _fields_ = [("cbSize", ctypes.c_uint), ("dwTime", ctypes.c_uint)]
+
+    lii = LASTINPUTINFO()
+    lii.cbSize = ctypes.sizeof(lii)
+    if ctypes.windll.user32.GetLastInputInfo(ctypes.byref(lii)):
+        millis = ctypes.windll.kernel32.GetTickCount() - lii.dwTime
+        return millis / 1000.0
+    return 0
+
+def send_screenshot_to_api(api_url, token, encoded_data, timestamp, log_text, idle_sessions):
+    headers = {"Authorization": f"Token {token}", "Content-Type": "application/json"}
+    payload = {
+        "screenshot_json": {timestamp: encoded_data},
+        "log_text": log_text,
+        "idle_time_json": {
+            "idle_sessions": idle_sessions,
+            "total_idle_time": sum(session["duration_seconds"] for session in idle_sessions)
+        }
+    }
+    try:
+        response = requests.post(api_url, json=payload, headers=headers, timeout=10)
+        return response.status_code == 200
+    except Exception as e:
+        log(f"[ERROR] Failed to send screenshot: {e}")
+        return False
+
+def get_token(username, login_url):
+    headers = {'Content-Type': 'application/json'}
+    payload = {'uuid': username}
+    try:
+        response = requests.post(login_url, json=payload, headers=headers, timeout=10)
         if response.status_code == 200:
             return response.json().get('token')
-        else:
-            print("Login failed:", response.status_code, response.text)
-            return None
     except Exception as e:
-        print("Error logging in:", e)
-        return None
+        log(f"[ERROR] Token fetch failed: {e}")
+    return None
 
-def take_single_screenshot_and_send_to_api(api_url, token):
-    screenshot = pyautogui.screenshot()
+def send_offline_screenshots(api_url, token):
+    for filename in os.listdir(OFFLINE_QUEUE_DIR):
+        if filename.endswith(".png"):
+            filepath = os.path.join(OFFLINE_QUEUE_DIR, filename)
+            try:
+                with Image.open(filepath) as img:
+                    img_copy = img.copy()
+                timestamp = filename.replace("screenshot_", "").replace(".png", "")
+                encoded = encode_screenshot(img_copy)
+                if send_screenshot_to_api(api_url, token, encoded, timestamp, get_complete_logs(), []):
+                    os.remove(filepath)
+            except Exception as e:
+                log(f"[ERROR] Failed to send offline screenshot: {e}")
 
-    # Save locally
-    timestamp = datetime.now().strftime("%d-%m-%Y_%H-%M-%S")
+# --- Main Loop ---
+def run_loop(api_url, login_url, screenshot_interval=3, send_interval=5):
+    user_uuid = get_system_username_uuid()
+    token = None
 
-    filename = f"screenshot_{timestamp}.png"
-    screenshot.save(filename)
-    print(f"📸 Saved locally as: {filename}")
+    while token is None:
+        log("🔐 Authenticating...")
+        if check_internet():
+            token = get_token(user_uuid, login_url)
+        if token is None:
+            time.sleep(30)
 
-    # Encode and send to API
-    json_data = encode_screenshot(screenshot)
-    full_payload = {"screenshot_json": json_data}
-    headers = {"Authorization": f"Token {token}"}
-
-    try:
-        response = requests.post(api_url, json=full_payload, headers=headers)
-        if response.status_code == 200:
-            print("\u2705 Screenshot sent:", response.json().get("saved_files"))
-        else:
-            print("\u274C Error:", response.status_code, response.text)
-    except Exception as e:
-        print("Error sending screenshot:", e)
-
-def run_screenshot_loop(api_url, login_url, username, password, interval_minutes):
-    token = get_token(username, password, login_url)
-    if not token:
-        print("\u274C Could not authenticate. Exiting.")
-        return
+    log("🟢 Screenshot loop started.")
+    last_screenshot_time = 0
+    last_send_time = 0
+    idle_start = None
+    idle_sessions = []
 
     while True:
-        istatus = check_internet()
-        timestamp = datetime.now().strftime("%d-%m-%Y_%H-%M-%S")
+        now = time.time()
 
-        screenshot = pyautogui.screenshot()
+        # Idle detection
+        idle_time = get_idle_duration_windows()
+        if idle_time >= IDLE_THRESHOLD:
+            if idle_start is None:
+                idle_start = datetime.now()
+        elif idle_start:
+            end = datetime.now()
+            duration = (end - idle_start).total_seconds()
+            idle_sessions.append({
+                "start_time": idle_start.strftime("%Y-%m-%d %H:%M:%S"),
+                "end_time": end.strftime("%Y-%m-%d %H:%M:%S"),
+                "duration_seconds": duration
+            })
+            idle_start = None
 
-        if istatus:
-            print("🌐 Internet available. Taking and uploading screenshot.")
-            take_single_screenshot_and_send_to_api(api_url, token)
-            upload_offline_screenshots(api_url, token)  # Try uploading any offline ones
-        else:
-            print("📴 Offline. Saving screenshot locally.")
-            save_offline_screenshot(screenshot, timestamp)
-            time.sleep(5)
+        if now - last_screenshot_time >= screenshot_interval * 60:
+            screenshot = pyautogui.screenshot()
+            timestamp = current_timestamp()
+            if check_internet():
+                save_screenshot(screenshot, timestamp)
+            else:
+                save_screenshot(screenshot, timestamp)
+                save_offline_copy(screenshot, timestamp)
+            last_screenshot_time = now
 
-        time.sleep(interval_minutes * 10)
+        if now - last_send_time >= send_interval * 60:
+            if screenshot:
+                encoded = encode_screenshot(screenshot)
+                if send_screenshot_to_api(api_url, token, encoded, current_timestamp(), get_complete_logs(), idle_sessions):
+                    log("📤 Screenshot sent.")
+                else:
+                    save_offline_copy(screenshot, current_timestamp())
 
+            send_offline_screenshots(api_url, token)
+            last_send_time = now
 
+        time.sleep(30)
+
+# --- Entry Point ---
 if __name__ == "__main__":
-    API_URL = "http://192.168.211.28:8000/api/screenshots/"
-    LOGIN_URL = "http://192.168.211.28:8000/api/login/"
-    USERNAME = input("Enter your username: ")
-    PASSWORD = input("Enter your password: ")
-    print("\U0001F552 You have 5 seconds to minimize this window...")
-    time.sleep(5)
-    run_screenshot_loop(API_URL, LOGIN_URL, USERNAME, PASSWORD, interval_minutes=1)
-
-ex = input("Press Enter to exit...")
+    run_loop(API_URL, LOGIN_URL)
