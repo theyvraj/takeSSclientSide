@@ -57,3 +57,8 @@
 [25-04-2025 17:59:41] INFO - ✅ All screenshot data sent successfully and cleared.
 [25-04-2025 17:59:41] INFO - 🧹 Cleared idle_data.json after successful transmission.
 [25-04-2025 18:01:41] INFO - 🖼️ Screenshot captured and added to JSON queue: 25-04-2025_18-01-41
+[25-04-2025 18:04:41] INFO - 🖼️ Screenshot captured and added to JSON queue: 25-04-2025_18-04-41
+[25-04-2025 18:04:41] INFO - 📤 Preparing to send queued screenshot data...
+[25-04-2025 18:04:44] INFO - [ERROR] Failed to send screenshot data: HTTPConnectionPool(host='192.168.211.28', port=8000): Max retries exceeded with url: /api/screenshots/ (Caused by NewConnectionError('<urllib3.connection.HTTPConnection object at 0x000001D1CADFA580>: Failed to establish a new connection: [WinError 10061] No connection could be made because the target machine actively refused it'))
+[25-04-2025 18:04:44] INFO - ❌ Failed to send screenshot data, retaining JSON for retry.
+[25-04-2025 18:04:46] INFO - [ERROR] Failed to send error logs: HTTPConnectionPool(host='192.168.211.28', port=8000): Max retries exceeded with url: /api/errors/ (Caused by NewConnectionError('<urllib3.connection.HTTPConnection object at 0x000001D1CADFA140>: Failed to establish a new connection: [WinError 10061] No connection could be made because the target machine actively refused it'))
