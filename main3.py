@@ -12,19 +12,20 @@ import socket
 import os
 import uuid
 import getpass
+import json
 
 # --- Configuration ---
-SCREENSHOTS_DIR = "screenshots"
-OFFLINE_QUEUE_DIR = "offline_queue"
+SCREENSHOT_JSON = "screenshot_data.json"
+ERROR_LOG_FILE = "error_log.json"
 LOG_DIR = "logs"
 IDLE_THRESHOLD = 60  # seconds
 
 API_URL = "http://192.168.211.28:8000/api/screenshots/"
 LOGIN_URL = "http://192.168.211.28:8000/api/login/"
+ERROR_API_URL = "http://192.168.211.28:8000/api/errors/"
 
 # --- Ensure Directories Exist ---
-for d in [SCREENSHOTS_DIR, OFFLINE_QUEUE_DIR, LOG_DIR]:
-    os.makedirs(d, exist_ok=True)
+os.makedirs(LOG_DIR, exist_ok=True)
 
 # --- Logger Setup ---
 def setup_logger():
@@ -41,6 +42,24 @@ def setup_logger():
 
 def log(msg):
     logger.info(msg)
+
+def log_error_to_file(error_message):
+    error_entry = {
+        "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        "error": error_message
+    }
+    try:
+        if os.path.exists(ERROR_LOG_FILE):
+            with open(ERROR_LOG_FILE, "r+", encoding="utf-8") as f:
+                existing = json.load(f)
+                existing.append(error_entry)
+                f.seek(0)
+                json.dump(existing, f, indent=2)
+        else:
+            with open(ERROR_LOG_FILE, "w", encoding="utf-8") as f:
+                json.dump([error_entry], f, indent=2)
+    except Exception as e:
+        log(f"[ERROR] Could not write to error_log.json: {e}")
 
 # --- Helper Functions ---
 def get_computer_username():
@@ -61,17 +80,6 @@ def check_internet(host="8.8.8.8", port=53, timeout=3):
         return True
     except (socket.timeout, socket.error):
         return False
-
-def save_screenshot(screenshot, timestamp, folder, is_offline=False):
-    filepath = os.path.join(folder, f"screenshot_{timestamp}.png")
-    
-    # Log the "no internet" message if saving to offline queue
-    if is_offline:
-        log("🌐 No internet connection found, saving screenshot in offline queue.")
-    
-    screenshot.save(filepath)
-    log(f"🖼️ Screenshot saved to: {filepath}")
-    return filepath
 
 def encode_screenshot(screenshot):
     img_byte_arr = io.BytesIO()
@@ -105,14 +113,16 @@ def get_token(username, login_url):
         if response.status_code == 200:
             return response.json().get('token')
         log(f"[AuthError] Login failed: {response.status_code} - {response.text}")
+        log_error_to_file(f"Token fetch failed: {response.status_code} - {response.text}")
     except Exception as e:
         log(f"[ERROR] Token fetch failed: {e}")
+        log_error_to_file(str(e))
     return None
 
-def send_screenshot_to_api(api_url, token, encoded_data, timestamp, log_text, idle_sessions):
+def send_screenshot_to_api(api_url, token, screenshot_data, log_text, idle_sessions):
     headers = {"Authorization": f"Token {token}", "Content-Type": "application/json"}
     payload = {
-        "screenshot_json": {timestamp: encoded_data},
+        "screenshot_json": screenshot_data,
         "log_text": log_text,
         "idle_time_json": {
             "idle_sessions": idle_sessions,
@@ -123,25 +133,35 @@ def send_screenshot_to_api(api_url, token, encoded_data, timestamp, log_text, id
         response = requests.post(api_url, json=payload, headers=headers, timeout=10)
         return response.status_code == 200
     except Exception as e:
-        log(f"[ERROR] Failed to send screenshot: {e}")
+        log(f"[ERROR] Failed to send screenshot data: {e}")
+        log_error_to_file(str(e))
         return False
 
-def send_offline_screenshots(api_url, token):
-    for filename in os.listdir(OFFLINE_QUEUE_DIR):
-        if filename.endswith(".png"):
-            filepath = os.path.join(OFFLINE_QUEUE_DIR, filename)
-            try:
-                with Image.open(filepath) as img:
-                    encoded = encode_screenshot(img)
-                timestamp = filename.replace("screenshot_", "").replace(".png", "")
-                if send_screenshot_to_api(api_url, token, encoded, timestamp, get_complete_logs(), []):
-                    os.remove(filepath)
-                    log(f"✅ Sent offline screenshot: {filename}")
-            except Exception as e:
-                log(f"[ERROR] Could not send offline screenshot: {e}")
+def send_error_logs_to_api(error_api_url, token):
+    if not os.path.exists(ERROR_LOG_FILE):
+        return
+
+    try:
+        with open(ERROR_LOG_FILE, "r", encoding="utf-8") as f:
+            errors = json.load(f)
+
+        if not errors:
+            return
+
+        headers = {"Authorization": f"Token {token}", "Content-Type": "application/json"}
+        payload = {"errors": errors}
+
+        response = requests.post(error_api_url, json=payload, headers=headers, timeout=10)
+        if response.status_code == 200:
+            os.remove(ERROR_LOG_FILE)
+            log("🧹 Cleared error_log.json after successful transmission.")
+        else:
+            log(f"[ErrorLog] Failed to send errors: {response.status_code} - {response.text}")
+    except Exception as e:
+        log(f"[ERROR] Failed to send error logs: {e}")
 
 # --- Main Loop ---
-def run_loop(api_url, login_url, screenshot_interval=3, send_interval=5):
+def run_loop(api_url, login_url, error_api_url, screenshot_interval=3, send_interval=5):
     user_uuid = get_system_username_uuid()
     token = None
 
@@ -157,7 +177,6 @@ def run_loop(api_url, login_url, screenshot_interval=3, send_interval=5):
     last_send_time = 0
     idle_start = None
     idle_sessions = []
-    screenshot_queue = []
 
     while True:
         now = time.time()
@@ -181,33 +200,42 @@ def run_loop(api_url, login_url, screenshot_interval=3, send_interval=5):
         if now - last_screenshot_time >= screenshot_interval * 60:
             screenshot = pyautogui.screenshot()
             timestamp = current_timestamp()
-            
-            # Save screenshot based on internet availability
-            if check_internet():
-                save_screenshot(screenshot, timestamp, SCREENSHOTS_DIR)
-            else:
-                save_screenshot(screenshot, timestamp, OFFLINE_QUEUE_DIR, is_offline=True)
+            encoded = encode_screenshot(screenshot)
 
-            # Store screenshot and timestamp in queue
-            screenshot_queue.append((screenshot, timestamp))
+            # Append screenshot to JSON file
+            new_entry = {timestamp: encoded}
+            existing_data = []
+            if os.path.exists(SCREENSHOT_JSON):
+                with open(SCREENSHOT_JSON, "r", encoding="utf-8") as f:
+                    existing_data = json.load(f)
+            existing_data.append(new_entry)
+            with open(SCREENSHOT_JSON, "w", encoding="utf-8") as f:
+                json.dump(existing_data, f, indent=2)
+            log(f"🖼️ Screenshot captured and added to JSON queue: {timestamp}")
             last_screenshot_time = now
 
-        # Send all screenshots in queue
+        # Send all screenshots every interval
         if now - last_send_time >= send_interval * 60:
-            log("📤 Preparing to send queued screenshots...")
-            for screenshot, timestamp in screenshot_queue:
-                encoded = encode_screenshot(screenshot)
-                success = send_screenshot_to_api(
-                    api_url, token, encoded, timestamp,
-                    get_complete_logs(), idle_sessions
-                )
-                if success:
-                    log(f"✅ Screenshot sent: {timestamp}")
-                else:
-                    log(f"❌ Failed to send screenshot: {timestamp}, kept in offline queue.")
+            log("📤 Preparing to send queued screenshot data...")
+            try:
+                if os.path.exists(SCREENSHOT_JSON):
+                    with open(SCREENSHOT_JSON, "r", encoding="utf-8") as f:
+                        data_list = json.load(f)
+                    screenshot_data = {k: v for d in data_list for k, v in d.items()}
 
-            screenshot_queue.clear()
-            send_offline_screenshots(api_url, token)
+                    success = send_screenshot_to_api(
+                        api_url, token, screenshot_data,
+                        get_complete_logs(), idle_sessions
+                    )
+                    if success:
+                        os.remove(SCREENSHOT_JSON)
+                        log("✅ All screenshot data sent successfully and cleared.")
+                    else:
+                        log("❌ Failed to send screenshot data, retaining JSON for retry.")
+            except Exception as e:
+                log_error_to_file(str(e))
+
+            send_error_logs_to_api(error_api_url, token)
             idle_sessions.clear()
             last_send_time = now
 
@@ -217,4 +245,4 @@ def run_loop(api_url, login_url, screenshot_interval=3, send_interval=5):
 logger, DAILY_LOG_FILE = setup_logger()
 
 if __name__ == "__main__":
-    run_loop(API_URL, LOGIN_URL)
+    run_loop(API_URL, LOGIN_URL, ERROR_API_URL)
