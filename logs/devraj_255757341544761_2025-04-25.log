@@ -1,0 +1,16 @@
+[25-04-2025 11:13:32] INFO - 🔐 Authenticating...
+[25-04-2025 11:13:32] INFO - 🟢 Screenshot loop started.
+[25-04-2025 11:13:33] INFO - 🖼️ Screenshot saved to: screenshots\screenshot_25-04-2025_11-13-33.png
+[25-04-2025 11:13:33] INFO - 📤 Preparing to send queued screenshots...
+[25-04-2025 11:13:33] INFO - ✅ Screenshot sent: 25-04-2025_11-13-33
+[25-04-2025 11:16:33] INFO - 🖼️ Screenshot saved to: screenshots\screenshot_25-04-2025_11-16-33.png
+[25-04-2025 11:18:33] INFO - 📤 Preparing to send queued screenshots...
+[25-04-2025 11:18:33] INFO - ✅ Screenshot sent: 25-04-2025_11-16-33
+[25-04-2025 11:19:33] INFO - 🖼️ Screenshot saved to: screenshots\screenshot_25-04-2025_11-19-33.png
+[25-04-2025 11:19:36] INFO - 🖼️ Screenshot saved to: offline_queue\screenshot_25-04-2025_11-19-33.png
+[25-04-2025 11:22:36] INFO - 🖼️ Screenshot saved to: screenshots\screenshot_25-04-2025_11-22-36.png
+[25-04-2025 11:23:36] INFO - 📤 Preparing to send queued screenshots...
+[25-04-2025 11:23:36] INFO - ✅ Screenshot sent: 25-04-2025_11-19-33
+[25-04-2025 11:23:36] INFO - ✅ Screenshot sent: 25-04-2025_11-22-36
+[25-04-2025 11:23:36] INFO - ✅ Sent offline screenshot: screenshot_25-04-2025_11-19-33.png
+[25-04-2025 11:25:36] INFO - 🖼️ Screenshot saved to: screenshots\screenshot_25-04-2025_11-25-36.png
