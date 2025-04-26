@@ -8,7 +8,6 @@ win32gui.ShowWindow(the_program_to_hide , win32con.SW_HIDE)
 import os, sys
 import time
 import pyautogui
-from PIL import Image, ImageDraw
 import base64, subprocess
 import requests
 from datetime import datetime
