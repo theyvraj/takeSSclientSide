@@ -1,5 +1,4 @@
 import pyautogui
-from PIL import Image
 import logging
 from logging.handlers import RotatingFileHandler
 import ctypes
@@ -13,17 +12,25 @@ import os
 import uuid
 import getpass
 import json
+import tkinter as tk
+from tkinter import messagebox
+import webbrowser
+
 
 # --- Configuration ---
 SCREENSHOT_JSON = "screenshot_data.json"
 ERROR_LOG_FILE = "error_log.json"
 IDLE_DATA_FILE = "idle_data.json"
 LOG_DIR = "logs"
-IDLE_THRESHOLD = 60  # seconds
+IDLE_THRESHOLD = 60
+
+CURRENT_VERSION = "2.2"
+APP_NAME = "ssTaker"
 
 API_URL = "http://192.168.211.28:8000/api/screenshots/"
 LOGIN_URL = "http://192.168.211.28:8000/api/login/"
 ERROR_API_URL = "http://192.168.211.28:8000/api/errors/"
+UPDATE_INFO_URL = "http://192.168.211.28:8000/api/autoupdate/"
 
 # --- Ensure Directories Exist ---
 os.makedirs(LOG_DIR, exist_ok=True)
@@ -63,6 +70,48 @@ def log_error_to_file(error_message):
         log(f"[ERROR] Could not write to error_log.json: {e}")
 
 # --- Helper Functions ---
+
+def version_tuple(version):
+    return tuple(map(int, (str(version).split("."))))
+
+def ask_user_to_update(new_version):
+    root = tk.Tk()
+    root.withdraw()  # Hide the main window
+    message = f"A new version ({new_version}) is available.\nDo you want to download it now?"
+    return messagebox.askyesno("Update Available", message)
+
+def get_latest_version_info():
+    try:
+        response = requests.post(UPDATE_INFO_URL, data={"appname": APP_NAME})
+        response.raise_for_status()
+        return response.json()
+    except requests.RequestException as e:
+        print(f"[ERROR] Could not reach update server: {e}")
+        return None
+
+def check_for_updates():
+    update_info = get_latest_version_info()
+    if update_info and update_info.get("status") == "success":
+        data = update_info.get("data", {})
+        latest_version = str(data.get("version"))
+        download_url = data.get("url")
+
+        if version_tuple(latest_version) > version_tuple(CURRENT_VERSION):
+            print(f"[UPDATE] New version {latest_version} is available.")
+            user_agrees = ask_user_to_update(latest_version)
+            if user_agrees:
+                print("[INFO] Opening browser for download...")
+                webbrowser.open(download_url)
+                print("[INFO] Please install the new version.")
+            else:
+                print("[INFO] User chose to continue without updating.")
+        else:
+            print("[INFO] You already have the latest version.")
+    else:
+        print("[INFO] Failed to retrieve valid update info.")
+
+check_for_updates()
+
 def get_computer_username():
     return getpass.getuser()
 
