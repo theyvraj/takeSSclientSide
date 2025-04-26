@@ -246,11 +246,11 @@ def run_loop(api_url, login_url, error_api_url, screenshot_interval=3, send_inte
                 idle_start = datetime.now()
         elif idle_start:
             end = datetime.now()
-            duration = (end - idle_start).total_seconds()
+            #duration = (end - idle_start).total_seconds()
             new_session = {
                 "start_time": idle_start.strftime("%Y-%m-%d %H:%M:%S"),
                 "end_time": end.strftime("%Y-%m-%d %H:%M:%S"),
-                "duration_seconds": duration
+                #"duration_seconds": duration
             }
             idle_sessions.append(new_session)
             try:
